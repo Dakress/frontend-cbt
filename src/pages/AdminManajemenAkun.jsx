@@ -13,9 +13,9 @@ export default function AdminManajemenAkun() {
   const [selectedUserId, setSelectedUserId] = useState(null);
   
   const [namaLengkap, setNamaLengkap] = useState('');
-  const [idOtomatis, setIdOtomatis] = useState('');
+  const [nimUsername, setNimUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [roleUser, setRoleUser] = useState('peserta'); // Role state
+  const [roleUser, setRoleUser] = useState('peserta');
   const [showPassword, setShowPassword] = useState(false);
 
   useEffect(() => {
@@ -37,7 +37,6 @@ export default function AdminManajemenAkun() {
   }, [navigate]);
 
   const fetchUsers = async () => {
-    // Memuat akun Peserta dan Pengawas
     const { data, error } = await supabase
       .from('users')
       .select('*')
@@ -55,9 +54,8 @@ export default function AdminManajemenAkun() {
     setIsEditMode(false);
     setSelectedUserId(null);
     setNamaLengkap('');
+    setNimUsername('');
     setRoleUser('peserta');
-    const randomId = Math.floor(100000 + Math.random() * 900000).toString();
-    setIdOtomatis(randomId);
     setPassword('123456');
     setShowPassword(false);
     setModalOpen(true);
@@ -67,7 +65,7 @@ export default function AdminManajemenAkun() {
     setIsEditMode(true);
     setSelectedUserId(user.id);
     setNamaLengkap(user.nama_lengkap);
-    setIdOtomatis(user.nim_username);
+    setNimUsername(user.nim_username);
     setPassword(user.password);
     setRoleUser(user.role || 'peserta');
     setShowPassword(false);
@@ -77,8 +75,8 @@ export default function AdminManajemenAkun() {
   const handleSimpanUser = async (e) => {
     e.preventDefault();
 
-    if (!namaLengkap || !password) {
-      alert('Nama lengkap dan password wajib diisi!');
+    if (!namaLengkap || !nimUsername || !password) {
+      alert('Nama lengkap, NIM/Username, dan Password wajib diisi!');
       return;
     }
 
@@ -87,6 +85,7 @@ export default function AdminManajemenAkun() {
         .from('users')
         .update({
           nama_lengkap: namaLengkap,
+          nim_username: nimUsername,
           password: password,
           role: roleUser
         })
@@ -104,7 +103,7 @@ export default function AdminManajemenAkun() {
         .from('users')
         .insert([{
           nama_lengkap: namaLengkap,
-          nim_username: idOtomatis,
+          nim_username: nimUsername,
           password: password,
           role: roleUser,
           status_aktivitas: 'offline'
@@ -113,7 +112,7 @@ export default function AdminManajemenAkun() {
       if (error) {
         alert('Gagal membuat akun: ' + error.message);
       } else {
-        alert(`Akun berhasil dibuat!\nRole: ${roleUser.toUpperCase()}\nID: ${idOtomatis}\nPassword: ${password}`);
+        alert(`Akun berhasil dibuat!\nRole: ${roleUser.toUpperCase()}\nNIM/Username: ${nimUsername}\nPassword: ${password}`);
         setModalOpen(false);
         fetchUsers();
       }
@@ -229,7 +228,7 @@ export default function AdminManajemenAkun() {
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="🔍 Cari nama atau ID..."
+              placeholder="🔍 Cari nama atau NIM..."
               className="w-72 p-2 border border-gray-300 rounded-xl text-xs outline-none focus:ring-2 focus:ring-[#5E35B1]"
             />
           </div>
@@ -240,7 +239,7 @@ export default function AdminManajemenAkun() {
                 <tr className="bg-gray-50 text-gray-500 border-b border-gray-200">
                   <th className="p-3">No</th>
                   <th className="p-3">Nama Lengkap</th>
-                  <th className="p-3">ID Login</th>
+                  <th className="p-3">NIM / Username</th>
                   <th className="p-3">Role</th>
                   <th className="p-3">Password</th>
                   <th className="p-3 text-center">Aksi</th>
@@ -303,7 +302,7 @@ export default function AdminManajemenAkun() {
                     onChange={(e) => setRoleUser(e.target.value)}
                     className="w-full p-2.5 border border-gray-300 rounded-xl text-xs outline-none focus:ring-2 focus:ring-[#5E35B1] bg-white font-semibold"
                   >
-                    <option value="peserta">Peserta Ujian</option>
+                    <option value="peserta">Peserta Ujian (Mahasiswa)</option>
                     <option value="pengawas">Pengawas Ruangan</option>
                   </select>
                 </div>
@@ -315,18 +314,22 @@ export default function AdminManajemenAkun() {
                     required
                     value={namaLengkap}
                     onChange={(e) => setNamaLengkap(e.target.value)}
-                    placeholder="Contoh: Ahmad Pengawas"
+                    placeholder="Contoh: Budi Santoso"
                     className="w-full p-2.5 border border-gray-300 rounded-xl text-xs outline-none focus:ring-2 focus:ring-[#5E35B1]"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-gray-700 mb-1">ID Login (Otomatis)</label>
+                  <label className="block text-xs font-bold text-gray-700 mb-1">
+                    {roleUser === 'peserta' ? 'NIM Mahasiswa' : 'Username Login'}
+                  </label>
                   <input 
                     type="text"
-                    disabled
-                    value={idOtomatis}
-                    className="w-full p-2.5 bg-gray-100 border border-gray-300 rounded-xl text-xs font-mono font-bold text-[#5E35B1] cursor-not-allowed"
+                    required
+                    value={nimUsername}
+                    onChange={(e) => setNimUsername(e.target.value)}
+                    placeholder={roleUser === 'peserta' ? 'Contoh: 2026001' : 'Contoh: pengawas01'}
+                    className="w-full p-2.5 border border-gray-300 rounded-xl text-xs font-mono font-bold text-[#5E35B1] outline-none focus:ring-2 focus:ring-[#5E35B1]"
                   />
                 </div>
 

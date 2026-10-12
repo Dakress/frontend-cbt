@@ -70,7 +70,7 @@ export default function Login() {
 
         <form onSubmit={handleLogin} className="space-y-5">
           <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-1">ID</label>
+            <label className="block text-sm font-semibold text-gray-700 mb-1">NIM</label>
             <input 
               type="text" 
               required
