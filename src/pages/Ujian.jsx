@@ -198,7 +198,7 @@ export default function Ujian() {
     await simpanHasilKeDatabaseDirect();
   };
 
-  const simpanHasilKeDatabaseDirect = async () => {
+const simpanHasilKeDatabaseDirect = async () => {
     const activeSesi = sesiAktifRef.current || sesiAktif;
     const activeUser = userRef.current || user;
     const activeSoal = daftarSoalRef.current;
@@ -212,12 +212,21 @@ export default function Ujian() {
     try {
       const dataJawabanPg = {};
       const dataJawabanUraian = {};
+      let jumlahBenarPg = 0; // Counter untuk jawaban PG yang benar
 
       activeSoal.forEach((soal) => {
         const jawabPeserta = activeJawaban[soal.id];
+        
         if (jawabPeserta !== undefined && jawabPeserta !== '') {
-          if (soal.tipe_soal === 'pg') {
-            dataJawabanPg[soal.id] = jawabPeserta.toLowerCase();
+          if (soal.tipe_soal === 'pg' || soal.tipe_soal === 'PG') {
+            const formatJawab = String(jawabPeserta).trim().toLowerCase();
+            dataJawabanPg[soal.id] = formatJawab;
+
+            // Hitung otomatis 1 poin jika jawaban sesuai dengan kunci_jawaban
+            const kunciDB = soal.kunci_jawaban ? String(soal.kunci_jawaban).trim().toLowerCase() : '';
+            if (formatJawab === kunciDB) {
+              jumlahBenarPg += 1;
+            }
           } else if (soal.tipe_soal === 'uraian') {
             dataJawabanUraian[soal.id] = jawabPeserta;
           }
@@ -228,9 +237,9 @@ export default function Ujian() {
 
       const payload = {
         paket_id: activeSesi.paket_id,
-        nilai_pg: 0,
-        nilai_uraian: 0,
-        total_nilai: 0,
+        nilai_pg: jumlahBenarPg, // Skor otomatis PG (1 soal benar = 1 poin)
+        nilai_uraian: 0,         // Diset 0 untuk dinilai manual nanti
+        total_nilai: jumlahBenarPg,
         jawaban_pg: dataJawabanPg,
         jawaban_uraian: JSON.stringify(dataJawabanUraian),
         status: 'Menunggu',
@@ -257,7 +266,7 @@ export default function Ujian() {
         }
       }
 
-      // Update status_aktivitas peserta menjadi 'selesai' setelah ujian diserahkan
+      // Update status_aktivitas peserta menjadi 'selesai'
       if (activeUser && activeUser.id) {
         await supabase
           .from('users')
@@ -336,32 +345,61 @@ export default function Ujian() {
       </header>
 
       <main className="flex-1 p-6 max-w-7xl mx-auto w-full grid grid-cols-1 lg:grid-cols-12 gap-6">
-        <div className="lg:col-span-6 bg-white p-5 rounded-2xl shadow-sm border border-gray-200 h-fit space-y-3">
-          <div className="flex justify-between items-center">
-            <p className="text-xs font-bold text-gray-700 flex items-center space-x-1">
-              <span>🎥</span>
-              <span>Video Analisis Penelitian:</span>
-            </p>
-            <button
-              type="button"
-              onClick={() => setIsZoomVideo(true)}
-              className="text-xs bg-purple-100 hover:bg-purple-200 text-[#5E35B1] font-semibold px-3 py-1.5 rounded-lg transition"
-            >
-              🔍 Perbesar Video
-            </button>
+        {/* KOLOM KIRI: VIDEO & PETUNJUK PENGERJAAN */}
+        <div className="lg:col-span-6 space-y-4">
+          <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-200 space-y-3">
+            <div className="flex justify-between items-center">
+              <p className="text-xs font-bold text-gray-700 flex items-center space-x-1">
+                <span>🎥</span>
+                <span>Video Analisis Penelitian:</span>
+              </p>
+              <button
+                type="button"
+                onClick={() => setIsZoomVideo(true)}
+                className="text-xs bg-purple-100 hover:bg-purple-200 text-[#5E35B1] font-semibold px-3 py-1.5 rounded-lg transition"
+              >
+                🔍 Perbesar Video
+              </button>
+            </div>
+
+            <div className="aspect-video w-full bg-black rounded-xl overflow-hidden shadow-inner">
+              <iframe 
+                src={getEmbedUrl(sesiAktif?.paket_soal?.link_video)} 
+                title="Video Penelitian" 
+                className="w-full h-full border-0" 
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowFullScreen
+              ></iframe>
+            </div>
           </div>
 
-          <div className="aspect-video w-full bg-black rounded-xl overflow-hidden shadow-inner">
-            <iframe 
-              src={getEmbedUrl(sesiAktif?.paket_soal?.link_video)} 
-              title="Video Penelitian" 
-              className="w-full h-full border-0" 
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-              allowFullScreen
-            ></iframe>
+          {/* BOX PETUNJUK PENGERJAAN (STAYS BELOW VIDEO) */}
+          <div className="bg-amber-50/90 border border-amber-200/90 rounded-2xl p-5 shadow-sm text-xs text-amber-950 space-y-3">
+            <h3 className="font-bold text-amber-900 flex items-center gap-2 text-xs uppercase tracking-wide">
+              <span>📋</span>
+              <span>PETUNJUK PENGERJAAN</span>
+            </h3>
+            <ol className="list-decimal list-inside space-y-2 leading-relaxed font-medium text-amber-900/90">
+              <li>
+                Tonton cuplikan film secara saksama pada menit yang relevan dengan pertanyaan sebelum menjawab pertanyaan.
+              </li>
+              <li>
+                Untuk soal <strong>Multiple Choice (MC)</strong>: klik huruf jawaban yang paling tepat.
+              </li>
+              <li>
+                Untuk soal <strong>Open-Ended (OE)</strong>: ketik argumen Anda dalam rentang 100 – 150 kata dalam kotak yang disediakan.
+              </li>
+              <li>
+                Tidak ada jawaban benar atau salah mutlak. Yang dinilai adalah kualitas argumen dan proses berpikirmu.
+              </li>
+              <li>
+                Cantumkan bukti spesifik dari film (dialog, ekspresi, komposisi visual, atau bahkan timestamp -menit,detik) untuk mendukung argumenmu.
+              </li>
+            </ol>
           </div>
         </div>
 
+        {/* KOLOM KANAN: SOAL & NAVIGASI */}
         <div className="lg:col-span-6 space-y-6">
           {daftarSoal.length === 0 ? (
             <div className="bg-white p-12 rounded-2xl text-center text-gray-400 text-xs shadow-sm">
@@ -376,7 +414,7 @@ export default function Ujian() {
               </div>
 
               <div className="space-y-4">
-                <h2 className="text-xs font-semibold text-gray-800 leading-relaxed">
+                <h2 className="text-xs font-semibold text-gray-800 leading-relaxed whitespace-pre-line">
                   {soalAktif?.pertanyaan}
                 </h2>
 

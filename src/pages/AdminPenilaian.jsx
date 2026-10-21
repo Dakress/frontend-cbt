@@ -52,6 +52,32 @@ export default function AdminPenilaian() {
     }
   };
 
+  const getJawabanPgPeserta = (soalId, item = hasilAktif) => {
+    if (!item?.jawaban_pg) return '';
+    try {
+      let pgData = item.jawaban_pg;
+      if (typeof pgData === 'string') {
+        pgData = JSON.parse(pgData);
+      }
+      return pgData[soalId] ? String(pgData[soalId]).trim().toLowerCase() : '';
+    } catch (e) {
+      return '';
+    }
+  };
+
+  const getJawabanUraianPeserta = (soalId, item = hasilAktif) => {
+    if (!item?.jawaban_uraian) return '';
+    try {
+      let uraianData = item.jawaban_uraian;
+      if (typeof uraianData === 'string') {
+        uraianData = JSON.parse(uraianData);
+      }
+      return uraianData[soalId] || '';
+    } catch (e) {
+      return item.jawaban_uraian;
+    }
+  };
+
   const fetchSoalByPaket = async (paketId, currentHasilItem) => {
     const { data, error } = await supabase
       .from('soal')
@@ -62,11 +88,24 @@ export default function AdminPenilaian() {
     if (!error && data) {
       setDaftarSoalPaket(data);
       
-      // Inisialisasi nilai: Jika sudah pernah dinilai/tersimpan, ambil dari total atau set 0
       const inisialNilai = {};
       data.forEach(soal => {
-        // Default 0 jika belum ada rincian tersimpan
-        inisialNilai[soal.id] = 0;
+        const isPg = soal.tipe_soal === 'pg' || soal.tipe_soal === 'PG';
+        
+        if (isPg) {
+          // Koreksi Otomatis Soal PG: 1 jika Benar, 0 jika Salah
+          const jawabUser = getJawabanPgPeserta(soal.id, currentHasilItem);
+          const kunciDB = soal.kunci_jawaban ? String(soal.kunci_jawaban).trim().toLowerCase() : '';
+          
+          if (jawabUser !== '' && jawabUser === kunciDB) {
+            inisialNilai[soal.id] = 1;
+          } else {
+            inisialNilai[soal.id] = 0;
+          }
+        } else {
+          // Uraian diset 0 secara default untuk dikoreksi manual oleh Admin
+          inisialNilai[soal.id] = 0;
+        }
       });
       setNilaiPerSoal(inisialNilai);
     }
@@ -94,9 +133,10 @@ export default function AdminPenilaian() {
 
     daftarSoalPaket.forEach(soal => {
       const perolehan = nilaiPerSoal[soal.id] || 0;
-      if (soal.tipe_soal === 'pg') {
+      const isPg = soal.tipe_soal === 'pg' || soal.tipe_soal === 'PG';
+      if (isPg) {
         totalPg += perolehan;
-      } else if (soal.tipe_soal === 'uraian') {
+      } else {
         totalUraian += perolehan;
       }
     });
@@ -122,32 +162,6 @@ export default function AdminPenilaian() {
     }
   };
 
-  const getJawabanPgPeserta = (soalId) => {
-    if (!hasilAktif?.jawaban_pg) return '';
-    try {
-      let pgData = hasilAktif.jawaban_pg;
-      if (typeof pgData === 'string') {
-        pgData = JSON.parse(pgData);
-      }
-      return pgData[soalId] || '';
-    } catch (e) {
-      return '';
-    }
-  };
-
-  const getJawabanUraianPeserta = (soalId) => {
-    if (!hasilAktif?.jawaban_uraian) return '';
-    try {
-      let uraianData = hasilAktif.jawaban_uraian;
-      if (typeof uraianData === 'string') {
-        uraianData = JSON.parse(uraianData);
-      }
-      return uraianData[soalId] || '';
-    } catch (e) {
-      return hasilAktif.jawaban_uraian;
-    }
-  };
-
   const handleExportSemuaExcel = () => {
     if (daftarHasil.length === 0) {
       alert('Tidak ada data untuk diexport.');
@@ -155,14 +169,18 @@ export default function AdminPenilaian() {
     }
 
     let csvContent = "\uFEFF";
-    csvContent += "No;Nama Peserta;Paket Ujian;Total Nilai\r\n";
+    csvContent += "No;Nama Peserta;NIM/Username;Paket Ujian;Nilai PG;Nilai Uraian;Total Nilai;Status\r\n";
 
     daftarHasil.forEach((item, index) => {
       const nama = item.users?.nama_lengkap || '-';
+      const nim = item.users?.nim_username || '-';
       const paket = item.paket_soal?.nama_paket || '-';
+      const pg = item.nilai_pg || 0;
+      const uraian = item.nilai_uraian || 0;
       const nilai = item.total_nilai || 0;
+      const status = item.status || 'Menunggu';
 
-      csvContent += `${index + 1};"${nama}";"${paket}";${nilai}\r\n`;
+      csvContent += `${index + 1};"${nama}";"${nim}";"${paket}";${pg};${uraian};${nilai};"${status}"\r\n`;
     });
 
     const encodedUri = encodeURI("data:text/csv;charset=utf-8," + csvContent);
@@ -185,26 +203,33 @@ export default function AdminPenilaian() {
     csvContent += `Nama Peserta;${hasilAktif.users?.nama_lengkap || '-'}\r\n`;
     csvContent += `NIM / Username;${hasilAktif.users?.nim_username || '-'}\r\n`;
     csvContent += `Paket Ujian;${hasilAktif.paket_soal?.nama_paket || '-'}\r\n`;
-    csvContent += `Total Nilai Akhir;${hasilAktif.total_nilai || 0}\r\n\r\n`;
+    csvContent += `Total Nilai Akhir;${hitungTotalRealtime()}\r\n\r\n`;
     
-    csvContent += "No;Tipe Soal;Pertanyaan;Jawaban Peserta\r\n";
+    csvContent += "No;Tipe Soal;Pertanyaan;Kunci Jawaban;Jawaban Peserta;Poin Diberikan\r\n";
 
     daftarSoalPaket.forEach((soal, index) => {
       let jawabanDisplay = 'TIDAK MENJAWAB';
+      let kunciDisplay = soal.kunci_jawaban ? String(soal.kunci_jawaban).toUpperCase() : '-';
+      const isPg = soal.tipe_soal === 'pg' || soal.tipe_soal === 'PG';
 
-      if (soal.tipe_soal === 'pg') {
+      if (isPg) {
         const p = getJawabanPgPeserta(soal.id);
         if (p) jawabanDisplay = p.toUpperCase();
-      } else if (soal.tipe_soal === 'uraian') {
+      } else {
+        kunciDisplay = 'N/A (Uraian)';
         const u = getJawabanUraianPeserta(soal.id);
         if (u) jawabanDisplay = u;
       }
       
+      const poin = nilaiPerSoal[soal.id] || 0;
+
       const row = [
         index + 1,
-        soal.tipe_soal.toUpperCase(),
+        isPg ? 'PILIHAN GANDA' : 'URAIAN',
         `"${soal.pertanyaan.replace(/"/g, '""')}"`,
-        `"${jawabanDisplay.replace(/"/g, '""')}"`
+        `"${kunciDisplay}"`,
+        `"${jawabanDisplay.replace(/"/g, '""')}"`,
+        poin
       ];
       csvContent += row.join(";") + "\r\n";
     });
@@ -245,6 +270,7 @@ export default function AdminPenilaian() {
 
   return (
     <div className="min-h-screen bg-[#F4F5F7] flex">
+      {/* SIDEBAR NAVIGATION */}
       <aside className="w-64 bg-[#5E35B1] text-white flex flex-col justify-between p-6">
         <div>
           <div className="flex items-center space-x-3 mb-10">
@@ -290,6 +316,7 @@ export default function AdminPenilaian() {
         </div>
       </aside>
 
+      {/* MAIN CONTENT AREA */}
       <main className="flex-1 p-8 overflow-y-auto">
         <header className="flex justify-between items-center mb-8">
           <div>
@@ -319,6 +346,7 @@ export default function AdminPenilaian() {
         </header>
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          {/* LEFT SIDE: DAFTAR PESERTA */}
           <div className="lg:col-span-4 bg-white p-6 rounded-xl shadow-sm border border-gray-100 h-fit space-y-4">
             <h2 className="text-sm font-bold text-gray-800">Pilih Akun Peserta</h2>
             
@@ -365,13 +393,16 @@ export default function AdminPenilaian() {
             </div>
           </div>
 
+          {/* RIGHT SIDE: LEMBAR JAWABAN & PENILAIAN */}
           <div className="lg:col-span-8 bg-white p-6 rounded-xl shadow-sm border border-gray-100 space-y-6">
             {hasilAktif ? (
               <>
                 <div className="flex justify-between items-center pb-4 border-b border-gray-100 sticky top-0 bg-white z-10 pt-2">
                   <div>
                     <h2 className="text-base font-bold text-gray-800">Menilai: {hasilAktif.users?.nama_lengkap} ({hasilAktif.users?.nim_username})</h2>
-                    <p className="text-xs text-gray-400">Mengerjakan: {hasilAktif.paket_soal?.nama_paket} | Status: <span className="font-bold text-purple-600">{hasilAktif.status}</span> (Total Nilai Tersimpan: {hasilAktif.total_nilai || 0})</p>
+                    <p className="text-xs text-gray-400">
+                      Mengerjakan: {hasilAktif.paket_soal?.nama_paket} | Status: <span className={`font-bold ${hasilAktif.status === 'Dinilai' ? 'text-green-600' : 'text-amber-600'}`}>{hasilAktif.status}</span>
+                    </p>
                   </div>
                   <div className="flex items-center space-x-3">
                     <button 
@@ -382,10 +413,11 @@ export default function AdminPenilaian() {
                       <span>Export Akun Ini</span>
                     </button>
 
-                    <div className="text-right">
-                      <p className="text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-0.5">Total Realtime</p>
-                      <p className="text-xl font-black text-[#5E35B1] leading-none">{hitungTotalRealtime()}</p>
+                    <div className="text-right bg-purple-50 px-3 py-1.5 rounded-xl border border-purple-200">
+                      <p className="text-[9px] text-purple-700 uppercase font-bold tracking-wider mb-0.5">TOTAL REALTIME</p>
+                      <p className="text-xl font-black text-[#5E35B1] leading-none text-center">{hitungTotalRealtime()}</p>
                     </div>
+
                     <button onClick={handleSimpanNilai} className="bg-[#5E35B1] hover:bg-[#4b2a8e] text-white px-5 py-2.5 rounded-xl text-xs font-semibold shadow-sm transition">
                       💾 Simpan Penilaian Akhir
                     </button>
@@ -396,7 +428,7 @@ export default function AdminPenilaian() {
                   <div className="flex justify-between items-center border-b pb-2">
                     <h3 className="text-sm font-bold text-gray-800">Lembar Jawaban Per Soal (Pilihan Ganda & Uraian)</h3>
                     <span className="text-[11px] bg-purple-50 text-[#5E35B1] px-2.5 py-1 rounded-lg font-medium">
-                      💡 Berikan poin lalu klik "Simpan Penilaian Akhir" agar tersimpan permanen
+                      💡 Soal PG dikoreksi otomatis (1 jika Benar). Isi poin Uraian secara manual.
                     </span>
                   </div>
                   
@@ -406,16 +438,26 @@ export default function AdminPenilaian() {
                     daftarSoalPaket.map((soal, index) => {
                       const pilihanPgPeserta = getJawabanPgPeserta(soal.id);
                       const teksUraianPeserta = getJawabanUraianPeserta(soal.id);
+                      const isPg = soal.tipe_soal === 'pg' || soal.tipe_soal === 'PG';
+                      const kunciDB = soal.kunci_jawaban ? String(soal.kunci_jawaban).trim().toLowerCase() : '';
+                      const isBenar = isPg && pilihanPgPeserta !== '' && pilihanPgPeserta === kunciDB;
 
                       return (
-                        <div key={soal.id} className="p-4 bg-gray-50 rounded-xl border border-gray-200 space-y-3 hover:border-purple-300 transition">
+                        <div key={soal.id} className={`p-4 bg-gray-50 rounded-xl border transition space-y-3 ${isPg ? (isBenar ? 'border-green-300 bg-green-50/20' : 'border-gray-200') : 'border-purple-200 bg-purple-50/10'}`}>
                           
                           <div className="flex justify-between items-center">
                             <div className="flex items-center space-x-2">
-                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${soal.tipe_soal === 'pg' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>
-                                {soal.tipe_soal === 'pg' ? 'Pilihan Ganda' : 'Uraian / Analisis'}
+                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${isPg ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>
+                                {isPg ? 'Pilihan Ganda' : 'Uraian / Analisis'}
                               </span>
                               <span className="text-xs font-bold text-gray-700">Soal No. {index + 1}</span>
+                              
+                              {/* BADGE INDIKATOR KOREKSI PG */}
+                              {isPg && (
+                                <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold flex items-center gap-1 ${isBenar ? 'bg-green-100 text-green-700 border border-green-300' : 'bg-red-100 text-red-700 border border-red-300'}`}>
+                                  {isBenar ? '✓ BENAR (+1)' : '✕ SALAH (0)'}
+                                </span>
+                              )}
                             </div>
 
                             <div className="flex items-center space-x-2">
@@ -430,33 +472,57 @@ export default function AdminPenilaian() {
                             </div>
                           </div>
 
-                          <p className="text-xs text-gray-800 font-semibold">{soal.pertanyaan}</p>
+                          <p className="text-xs text-gray-800 font-semibold leading-relaxed whitespace-pre-line">{soal.pertanyaan}</p>
                           
-                          {soal.tipe_soal === 'pg' && (
+                          {/* DETAIL PILIHAN GANDA */}
+                          {isPg && (
                             <div className="space-y-2 pt-1">
-                              <div className="grid grid-cols-2 gap-1 text-[11px] text-gray-600">
+                              <div className="grid grid-cols-2 gap-2 text-[11px] text-gray-600">
                                 {['a', 'b', 'c', 'd'].map((opt) => {
                                   const isDipilihPeserta = pilihanPgPeserta === opt;
+                                  const isKunci = kunciDB === opt;
+
+                                  let styleOpt = "border-gray-200 bg-white text-gray-700";
+                                  if (isDipilihPeserta && isKunci) {
+                                    styleOpt = "bg-green-100 border-green-500 font-bold text-green-800";
+                                  } else if (isDipilihPeserta && !isKunci) {
+                                    styleOpt = "bg-red-100 border-red-400 font-bold text-red-800";
+                                  } else if (isKunci) {
+                                    styleOpt = "bg-blue-50 border-blue-400 font-bold text-blue-800";
+                                  }
+
                                   return (
                                     <div 
                                       key={opt} 
-                                      className={`p-1.5 rounded border ${isDipilihPeserta ? 'bg-purple-100 border-[#5E35B1] font-bold text-[#5E35B1]' : 'border-gray-200 bg-white'}`}
+                                      className={`p-2 rounded-lg border text-xs flex items-center justify-between ${styleOpt}`}
                                     >
-                                      {opt.toUpperCase()}. {soal[`opsi_${opt}`]} {isDipilihPeserta && ' ✓ (Pilihan Peserta)'}
+                                      <span>{opt.toUpperCase()}. {soal[`opsi_${opt}`]}</span>
+                                      <span className="text-[10px]">
+                                        {isDipilihPeserta && ' 👈 Pilihan Peserta'}
+                                        {isKunci && ' (KUNCI)'}
+                                      </span>
                                     </div>
                                   );
                                 })}
                               </div>
-                              <p className="text-[10px] text-gray-500 italic">
-                                * Jawaban peserta yang dipilih: <span className="font-bold uppercase text-[#5E35B1]">{pilihanPgPeserta || 'Tidak Menjawab'}</span>
-                              </p>
+
+                              <div className="flex justify-between items-center text-[11px] bg-white p-2 rounded-lg border border-gray-200 mt-1">
+                                <p className="text-gray-600">
+                                  * Jawaban Peserta: <span className="font-bold uppercase text-[#5E35B1]">{pilihanPgPeserta || 'Tidak Menjawab'}</span>
+                                </p>
+                                <p className="text-gray-600">
+                                  🔑 Kunci Jawaban Resmi: <span className="font-bold uppercase text-emerald-600">{kunciDB || '-'}</span>
+                                </p>
+                              </div>
                             </div>
                           )}
 
-                          {soal.tipe_soal === 'uraian' && (
+                          {/* DETAIL JAWABAN URAIAN */}
+                          {/* DETAIL JAWABAN URAIAN */}
+                          {!isPg && (
                             <div className="pt-1 space-y-1">
                               <p className="text-[10px] font-bold text-gray-600">Jawaban / Esai Peserta untuk soal ini:</p>
-                              <div className="p-3 bg-white border border-yellow-300 rounded-lg text-xs text-gray-700 font-serif whitespace-pre-wrap">
+                              <div className="p-3 bg-white border border-amber-300 rounded-lg text-xs text-gray-800 leading-relaxed font-sans whitespace-pre-wrap shadow-inner">
                                 {teksUraianPeserta || <span className="italic text-gray-400">Peserta tidak menuliskan jawaban untuk soal ini.</span>}
                               </div>
                             </div>
