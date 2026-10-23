@@ -33,7 +33,6 @@ export default function Ujian() {
       setUser(parsedUser);
       userRef.current = parsedUser;
 
-      // Update status aktivitas peserta menjadi 'proses' saat mulai ujian
       if (parsedUser.id) {
         supabase
           .from('users')
@@ -165,7 +164,8 @@ export default function Ujian() {
   };
 
   const getEmbedUrl = (url) => {
-    if (!url) return "https://www.youtube.com/embed/dQw4w9WgXcQ";
+    if (!url) return "https://elcrit.tech/film_tes.mp4";
+    if (url.endsWith('.mp4') || url.includes('elcrit.tech')) return url;
     if (url.includes('youtube.com') || url.includes('youtu.be')) {
       let videoId = '';
       if (url.includes('youtu.be/')) {
@@ -189,6 +189,11 @@ export default function Ujian() {
     return url;
   };
 
+  const isMp4Video = (url) => {
+    const finalUrl = getEmbedUrl(url);
+    return finalUrl.endsWith('.mp4') || finalUrl.includes('elcrit.tech');
+  };
+
   const handlePilihJawaban = (soalId, val) => {
     setJawaban(prev => ({ ...prev, [soalId]: val }));
   };
@@ -198,7 +203,7 @@ export default function Ujian() {
     await simpanHasilKeDatabaseDirect();
   };
 
-const simpanHasilKeDatabaseDirect = async () => {
+  const simpanHasilKeDatabaseDirect = async () => {
     const activeSesi = sesiAktifRef.current || sesiAktif;
     const activeUser = userRef.current || user;
     const activeSoal = daftarSoalRef.current;
@@ -212,7 +217,7 @@ const simpanHasilKeDatabaseDirect = async () => {
     try {
       const dataJawabanPg = {};
       const dataJawabanUraian = {};
-      let jumlahBenarPg = 0; // Counter untuk jawaban PG yang benar
+      let jumlahBenarPg = 0;
 
       activeSoal.forEach((soal) => {
         const jawabPeserta = activeJawaban[soal.id];
@@ -222,7 +227,6 @@ const simpanHasilKeDatabaseDirect = async () => {
             const formatJawab = String(jawabPeserta).trim().toLowerCase();
             dataJawabanPg[soal.id] = formatJawab;
 
-            // Hitung otomatis 1 poin jika jawaban sesuai dengan kunci_jawaban
             const kunciDB = soal.kunci_jawaban ? String(soal.kunci_jawaban).trim().toLowerCase() : '';
             if (formatJawab === kunciDB) {
               jumlahBenarPg += 1;
@@ -237,8 +241,8 @@ const simpanHasilKeDatabaseDirect = async () => {
 
       const payload = {
         paket_id: activeSesi.paket_id,
-        nilai_pg: jumlahBenarPg, // Skor otomatis PG (1 soal benar = 1 poin)
-        nilai_uraian: 0,         // Diset 0 untuk dinilai manual nanti
+        nilai_pg: jumlahBenarPg,
+        nilai_uraian: 0,
         total_nilai: jumlahBenarPg,
         jawaban_pg: dataJawabanPg,
         jawaban_uraian: JSON.stringify(dataJawabanUraian),
@@ -266,7 +270,6 @@ const simpanHasilKeDatabaseDirect = async () => {
         }
       }
 
-      // Update status_aktivitas peserta menjadi 'selesai'
       if (activeUser && activeUser.id) {
         await supabase
           .from('users')
@@ -306,6 +309,7 @@ const simpanHasilKeDatabaseDirect = async () => {
 
   const soalAktif = daftarSoal[currentIndex];
   const isSoalTerakhir = currentIndex === daftarSoal.length - 1;
+  const rawVideoUrl = sesiAktif?.paket_soal?.link_video || "https://elcrit.tech/film_tes.mp4";
 
   return (
     <div className="min-h-screen bg-[#F4F5F7] flex flex-col select-none relative">
@@ -362,18 +366,29 @@ const simpanHasilKeDatabaseDirect = async () => {
               </button>
             </div>
 
-            <div className="aspect-video w-full bg-black rounded-xl overflow-hidden shadow-inner">
-              <iframe 
-                src={getEmbedUrl(sesiAktif?.paket_soal?.link_video)} 
-                title="Video Penelitian" 
-                className="w-full h-full border-0" 
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                allowFullScreen
-              ></iframe>
+            <div className="aspect-video w-full bg-black rounded-xl overflow-hidden shadow-inner flex items-center justify-center">
+              {isMp4Video(rawVideoUrl) ? (
+                <video 
+                  controls 
+                  controlsList="nodownload"
+                  className="w-full h-full object-contain"
+                  src={getEmbedUrl(rawVideoUrl)}
+                >
+                  Browser Anda tidak mendukung pemutaran video HTML5.
+                </video>
+              ) : (
+                <iframe 
+                  src={getEmbedUrl(rawVideoUrl)} 
+                  title="Video Penelitian" 
+                  className="w-full h-full border-0" 
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                ></iframe>
+              )}
             </div>
           </div>
 
-          {/* BOX PETUNJUK PENGERJAAN (STAYS BELOW VIDEO) */}
+          {/* BOX PETUNJUK PENGERJAAN */}
           <div className="bg-amber-50/90 border border-amber-200/90 rounded-2xl p-5 shadow-sm text-xs text-amber-950 space-y-3">
             <h3 className="font-bold text-amber-900 flex items-center gap-2 text-xs uppercase tracking-wide">
               <span>📋</span>
@@ -522,14 +537,25 @@ const simpanHasilKeDatabaseDirect = async () => {
                 ✕ Kembalikan / Kecilkan
               </button>
             </div>
-            <div className="w-full h-[70vh] bg-black">
-              <iframe
-                src={getEmbedUrl(sesiAktif?.paket_soal?.link_video)}
-                className="w-full h-full border-0"
-                allow="autoplay; accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                title="Video Stimulus Perbesar"
-                allowFullScreen
-              ></iframe>
+            <div className="w-full h-[70vh] bg-black flex items-center justify-center">
+              {isMp4Video(rawVideoUrl) ? (
+                <video 
+                  controls 
+                  controlsList="nodownload"
+                  className="w-full h-full object-contain"
+                  src={getEmbedUrl(rawVideoUrl)}
+                >
+                  Browser Anda tidak mendukung pemutaran video HTML5.
+                </video>
+              ) : (
+                <iframe
+                  src={getEmbedUrl(rawVideoUrl)}
+                  className="w-full h-full border-0"
+                  allow="autoplay; accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  title="Video Stimulus Perbesar"
+                  allowFullScreen
+                ></iframe>
+              )}
             </div>
           </div>
         </div>
