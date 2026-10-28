@@ -1,17 +1,25 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../supabase';
+import * as XLSX from 'xlsx';
 
 export default function AdminPenilaian() {
   const navigate = useNavigate();
   const [adminName, setAdminName] = useState('Admin');
   const [daftarHasil, setDaftarHasil] = useState([]);
+  const [daftarPaket, setDaftarPaket] = useState([]);
+  const [totalAkunPeserta, setTotalAkunPeserta] = useState(0);
   const [hasilAktif, setHasilAktif] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState('Semua');
   
   const [daftarSoalPaket, setDaftarSoalPaket] = useState([]);
   const [nilaiPerSoal, setNilaiPerSoal] = useState({});
+
+  // STATE UNTUK MODAL EXPORT EXCEL
+  const [showModalExport, setShowModalExport] = useState(false);
+  const [selectedPaketExport, setSelectedPaketExport] = useState('');
+  const [jenisExport, setJenisExport] = useState('detail'); // 'detail' atau 'ringkasan'
 
   useEffect(() => {
     const storedUser = localStorage.getItem('user_cbt');
@@ -29,12 +37,27 @@ export default function AdminPenilaian() {
 
     setAdminName(parsed.nama_lengkap || 'Admin');
     fetchHasilUjian();
+    fetchDaftarPaket();
   }, [navigate]);
 
+  const fetchDaftarPaket = async () => {
+    const { data } = await supabase.from('paket_soal').select('*');
+    if (data) setDaftarPaket(data);
+  };
+
   const fetchHasilUjian = async () => {
+    // 1. Fetch total akun peserta terdaftar (role = 'peserta')
+    const { count: countPeserta } = await supabase
+      .from('users')
+      .select('*', { count: 'exact', head: true })
+      .eq('role', 'peserta');
+    
+    if (countPeserta !== null) setTotalAkunPeserta(countPeserta);
+
+    // 2. Fetch data hasil ujian
     const { data, error } = await supabase
       .from('hasil_ujian')
-      .select('*, users(nama_lengkap, nim_username), paket_soal(id, nama_paket)')
+      .select('*, users(nama_lengkap, nim_username), paket_soal(id, nama_paket, penjelasan)')
       .order('waktu_selesai', { ascending: false });
 
     if (error) {
@@ -45,7 +68,6 @@ export default function AdminPenilaian() {
       if (data.length > 0 && !hasilAktif) {
         handlePilihPeserta(data[0]);
       } else if (hasilAktif) {
-        // Pertahankan peserta aktif yang sedang dipilih saat refresh data
         const updatedActive = data.find(item => item.id === hasilAktif.id);
         if (updatedActive) setHasilAktif(updatedActive);
       }
@@ -93,7 +115,6 @@ export default function AdminPenilaian() {
         const isPg = soal.tipe_soal === 'pg' || soal.tipe_soal === 'PG';
         
         if (isPg) {
-          // Koreksi Otomatis Soal PG: 1 jika Benar, 0 jika Salah
           const jawabUser = getJawabanPgPeserta(soal.id, currentHasilItem);
           const kunciDB = soal.kunci_jawaban ? String(soal.kunci_jawaban).trim().toLowerCase() : '';
           
@@ -103,7 +124,6 @@ export default function AdminPenilaian() {
             inisialNilai[soal.id] = 0;
           }
         } else {
-          // Uraian diset 0 secara default untuk dikoreksi manual oleh Admin
           inisialNilai[soal.id] = 0;
         }
       });
@@ -162,34 +182,123 @@ export default function AdminPenilaian() {
     }
   };
 
-  const handleExportSemuaExcel = () => {
+  // ==========================================
+  // EXPORT RINGKASAN REKAPITULASI SEMUA PESERTA
+  // ==========================================
+  const handleExportRingkasan = () => {
     if (daftarHasil.length === 0) {
       alert('Tidak ada data untuk diexport.');
       return;
     }
 
-    let csvContent = "\uFEFF";
-    csvContent += "No;Nama Peserta;NIM/Username;Paket Ujian;Nilai PG;Nilai Uraian;Total Nilai;Status\r\n";
+    const rows = daftarHasil.map((item, index) => ({
+      'No': index + 1,
+      'Nama Peserta': item.users?.nama_lengkap || 'Tanpa Nama',
+      'NIM / Username': item.users?.nim_username || '-',
+      'Paket Ujian': item.paket_soal?.nama_paket || '-',
+      'Nilai PG': item.nilai_pg || 0,
+      'Nilai Uraian': item.nilai_uraian || 0,
+      'Total Nilai': item.total_nilai || 0,
+      'Status': item.status || 'Menunggu',
+      'Waktu Selesai': item.waktu_selesai ? new Date(item.waktu_selesai).toLocaleString('id-ID') : '-'
+    }));
 
-    daftarHasil.forEach((item, index) => {
-      const nama = item.users?.nama_lengkap || '-';
-      const nim = item.users?.nim_username || '-';
-      const paket = item.paket_soal?.nama_paket || '-';
-      const pg = item.nilai_pg || 0;
-      const uraian = item.nilai_uraian || 0;
-      const nilai = item.total_nilai || 0;
-      const status = item.status || 'Menunggu';
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Ringkasan Nilai');
+    XLSX.writeFile(workbook, `Ringkasan_Nilai_CBT_Semua_Peserta.xlsx`);
+    setShowModalExport(false);
+  };
 
-      csvContent += `${index + 1};"${nama}";"${nim}";"${paket}";${pg};${uraian};${nilai};"${status}"\r\n`;
+  // ==============================================================
+  // EXPORT DETAIL PER PAKET (MENGGUNAKAN TEKS SOAL SEBAGAI HEADER)
+  // ==============================================================
+  const handleExportDetailPaket = async () => {
+    if (!selectedPaketExport) {
+      alert('Silakan pilih Paket Ujian terlebih dahulu!');
+      return;
+    }
+
+    // 1. Fetch semua daftar soal berdasarkan paket_id yang dipilih (urut nomor_soal)
+    const { data: listSoal, error: errSoal } = await supabase
+      .from('soal')
+      .select('*')
+      .eq('paket_id', selectedPaketExport)
+      .order('nomor_soal', { ascending: true });
+
+    if (errSoal || !listSoal || listSoal.length === 0) {
+      alert('Gagal mengambil daftar soal atau paket ini belum memiliki soal!');
+      return;
+    }
+
+    // 2. Filter hasil ujian khusus peserta yang mengerjakan paket ini
+    const hasilPaketIni = daftarHasil.filter(h => h.paket_id === selectedPaketExport);
+
+    if (hasilPaketIni.length === 0) {
+      alert('Belum ada peserta yang mengerjakan paket ini!');
+      return;
+    }
+
+    const infoPaket = daftarPaket.find(p => p.id === selectedPaketExport);
+    const namaPaketStr = infoPaket?.nama_paket || 'Paket';
+
+    // 3. Matriks data baris Excel
+    const excelRows = hasilPaketIni.map((item, index) => {
+      // Parse jawaban PG & Uraian dari JSON
+      const jawabanPgObj = typeof item.jawaban_pg === 'string' ? JSON.parse(item.jawaban_pg || '{}') : (item.jawaban_pg || {});
+      let jawabanUraianObj = {};
+      try {
+        jawabanUraianObj = typeof item.jawaban_uraian === 'string' ? JSON.parse(item.jawaban_uraian || '{}') : (item.jawaban_uraian || {});
+      } catch (e) {
+        jawabanUraianObj = {};
+      }
+
+      // Metadata Dasar Peserta
+      const rowData = {
+        'No': index + 1,
+        'Nama Peserta': item.users?.nama_lengkap || 'Tanpa Nama',
+        'NIM / Username': item.users?.nim_username || '-',
+        'Paket Ujian': namaPaketStr,
+        'Total Nilai': item.total_nilai || 0,
+        'Nilai PG': item.nilai_pg || 0,
+        'Nilai Uraian': item.nilai_uraian || 0,
+        'Status': item.status || 'Menunggu',
+        'Waktu Selesai': item.waktu_selesai ? new Date(item.waktu_selesai).toLocaleString('id-ID') : '-'
+      };
+
+      // Buat Kolom Dinamis Menggunakan TEKS PERTANYAAN SOAL Langsung Sebagai Header Excel
+      listSoal.forEach((soal) => {
+        const noSoal = soal.nomor_soal;
+        // Bersihkan enter / newlines agar judul header Excel tetap rapi satu baris
+        const teksSoalClean = soal.pertanyaan 
+          ? soal.pertanyaan.replace(/\r?\n|\r/g, ' ').replace(/\s+/g, ' ').trim() 
+          : '';
+
+        if (soal.tipe_soal === 'pg' || soal.tipe_soal === 'PG') {
+          const jawabUser = jawabanPgObj[soal.id] ? String(jawabanPgObj[soal.id]).toUpperCase() : '-';
+          const kunci = soal.kunci_jawaban ? String(soal.kunci_jawaban).toUpperCase() : '';
+          
+          // Logika Poin PG: 1 jika BENAR, 0 jika SALAH
+          const poinPg = (jawabUser !== '-' && jawabUser === kunci) ? 1 : 0;
+
+          rowData[`Soal ${noSoal}: ${teksSoalClean} [Jawaban]`] = jawabUser;
+          rowData[`Soal ${noSoal}: ${teksSoalClean} [Poin]`] = poinPg;
+
+        } else if (soal.tipe_soal === 'uraian') {
+          const teksUraian = jawabanUraianObj[soal.id] || 'Tidak Menjawab';
+          rowData[`Soal ${noSoal}: ${teksSoalClean}`] = teksUraian;
+        }
+      });
+
+      return rowData;
     });
 
-    const encodedUri = encodeURI("data:text/csv;charset=utf-8," + csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", "Rekap_Nilai_Peserta.csv");
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    const worksheet = XLSX.utils.json_to_sheet(excelRows);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, `Detail ${namaPaketStr}`);
+    XLSX.writeFile(workbook, `Detail_Jawaban_CBT_${namaPaketStr.replace(/\s+/g, '_')}.xlsx`);
+
+    setShowModalExport(false);
   };
 
   const handleExportPerAkunExcel = () => {
@@ -268,8 +377,13 @@ export default function AdminPenilaian() {
     return Object.values(nilaiPerSoal).reduce((acc, curr) => acc + curr, 0);
   };
 
+  // Hitung statistik peserta unik yang sudah ujian
+  const pesertaSudahUjianSet = new Set(daftarHasil.map(item => item.users?.nim_username || item.user_id));
+  const jumlahSudahUjian = pesertaSudahUjianSet.size;
+  const jumlahBelumUjian = Math.max(0, totalAkunPeserta - jumlahSudahUjian);
+
   return (
-    <div className="min-h-screen bg-[#F4F5F7] flex">
+    <div className="min-h-screen bg-[#F4F5F7] flex select-none">
       {/* SIDEBAR NAVIGATION */}
       <aside className="w-64 bg-[#5E35B1] text-white flex flex-col justify-between p-6">
         <div>
@@ -326,11 +440,11 @@ export default function AdminPenilaian() {
           
           <div className="flex items-center space-x-4">
             <button 
-              onClick={handleExportSemuaExcel}
+              onClick={() => setShowModalExport(true)}
               className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-xl text-xs font-semibold shadow-sm transition flex items-center space-x-1.5"
             >
               <span>📊</span>
-              <span>Export Semua ke Excel</span>
+              <span>Export ke Excel</span>
             </button>
 
             <div className="flex items-center space-x-3 bg-white px-4 py-2 rounded-full shadow-sm border border-gray-100">
@@ -346,8 +460,25 @@ export default function AdminPenilaian() {
         </header>
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* LEFT SIDE: DAFTAR PESERTA */}
+          {/* LEFT SIDE: DAFTAR PESERTA & STATISTIK */}
           <div className="lg:col-span-4 bg-white p-6 rounded-xl shadow-sm border border-gray-100 h-fit space-y-4">
+            
+            {/* WIDGET STATISTIK PESERTA REALTIME */}
+            <div className="grid grid-cols-3 gap-2 pb-2 border-b border-gray-100">
+              <div className="bg-purple-50 p-2.5 rounded-xl border border-purple-100 text-center">
+                <p className="text-[10px] text-purple-700 font-bold uppercase">Total Peserta</p>
+                <p className="text-lg font-black text-[#5E35B1]">{totalAkunPeserta}</p>
+              </div>
+              <div className="bg-emerald-50 p-2.5 rounded-xl border border-emerald-100 text-center">
+                <p className="text-[10px] text-emerald-700 font-bold uppercase">Sudah Ujian</p>
+                <p className="text-lg font-black text-emerald-600">{jumlahSudahUjian}</p>
+              </div>
+              <div className="bg-amber-50 p-2.5 rounded-xl border border-amber-100 text-center">
+                <p className="text-[10px] text-amber-700 font-bold uppercase">Belum Ujian</p>
+                <p className="text-lg font-black text-amber-600">{jumlahBelumUjian}</p>
+              </div>
+            </div>
+
             <h2 className="text-sm font-bold text-gray-800">Pilih Akun Peserta</h2>
             
             <input 
@@ -518,7 +649,6 @@ export default function AdminPenilaian() {
                           )}
 
                           {/* DETAIL JAWABAN URAIAN */}
-                          {/* DETAIL JAWABAN URAIAN */}
                           {!isPg && (
                             <div className="pt-1 space-y-1">
                               <p className="text-[10px] font-bold text-gray-600">Jawaban / Esai Peserta untuk soal ini:</p>
@@ -544,6 +674,86 @@ export default function AdminPenilaian() {
           </div>
         </div>
       </main>
+
+      {/* MODAL POP-UP PILIH EXPORT EXCEL */}
+      {showModalExport && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-5">
+            <div className="flex justify-between items-center pb-3 border-b">
+              <h3 className="font-bold text-gray-800 text-sm flex items-center gap-2">
+                <span>📑</span>
+                <span>Export Data Ujian ke Excel</span>
+              </h3>
+              <button 
+                onClick={() => setShowModalExport(false)}
+                className="text-gray-400 hover:text-gray-600 font-bold text-sm"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="text-xs font-bold text-gray-700 block mb-2">Pilih Tipe Export:</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setJenisExport('detail')}
+                    className={`p-3 rounded-xl border text-xs font-semibold text-left transition ${jenisExport === 'detail' ? 'border-[#5E35B1] bg-purple-50 text-[#5E35B1]' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}
+                  >
+                    <p className="font-bold">1. Detail Per Paket</p>
+                    <p className="text-[10px] opacity-75 mt-0.5">Termasuk jawaban & poin per soal (Google Form style)</p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setJenisExport('ringkasan')}
+                    className={`p-3 rounded-xl border text-xs font-semibold text-left transition ${jenisExport === 'ringkasan' ? 'border-[#5E35B1] bg-purple-50 text-[#5E35B1]' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}
+                  >
+                    <p className="font-bold">2. Ringkasan Nilai</p>
+                    <p className="text-[10px] opacity-75 mt-0.5">Rekapitulasi total nilai semua peserta</p>
+                  </button>
+                </div>
+              </div>
+
+              {jenisExport === 'detail' && (
+                <div>
+                  <label className="text-xs font-bold text-gray-700 block mb-1.5">Pilih Paket Ujian:</label>
+                  <select
+                    value={selectedPaketExport}
+                    onChange={(e) => setSelectedPaketExport(e.target.value)}
+                    className="w-full p-2.5 border border-gray-300 rounded-xl text-xs outline-none focus:ring-2 focus:ring-[#5E35B1]"
+                  >
+                    <option value="">-- Pilih Paket / Tipe Ujian --</option>
+                    {daftarPaket.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.nama_paket} ({p.penjelasan || 'Tanpa Keterangan'})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 border-t">
+              <button
+                type="button"
+                onClick={() => setShowModalExport(false)}
+                className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-xl text-xs font-semibold transition"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={jenisExport === 'detail' ? handleExportDetailPaket : handleExportRingkasan}
+                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition shadow-sm flex items-center gap-1.5"
+              >
+                <span>📥 Download File Excel</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
